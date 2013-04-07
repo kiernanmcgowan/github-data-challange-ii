@@ -1,0 +1,10 @@
+{
+  "name": "dropdownmenu-github-data-challenge-ii",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "underscore": "1.4.x",
+    "async": "0.2.x",
+    "yajl": "0.8.x"
+  }
+}
