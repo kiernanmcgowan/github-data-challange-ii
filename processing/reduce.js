@@ -13,6 +13,7 @@ function reduce(paths, callback) {
   var total = [];
   archive.parseFiles(paths, function(err, data) {
     console.log(err);
+    console.log(data);
     var out = {};
     var dropped = 0;
     _.each(data, function(obj) {

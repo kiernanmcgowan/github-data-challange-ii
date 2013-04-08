@@ -10,6 +10,7 @@ var _ = require('underscore');
 function parseFile(path, cb) {
   fs.readFile(path, function(err, buffer) {
     if (err) {
+      console.log(err);
       cb(err, null);
     }
     zlib.gunzip(buffer, function(err, data) {
@@ -18,7 +19,6 @@ function parseFile(path, cb) {
       } else {
         var str = data.toString();
         var arr = str.split('\n');
-        console.log(arr.length);
         var output = [];
         var errCount = 0;
         // grab the majority of the objects
@@ -48,12 +48,23 @@ module.exports.parseFile = parseFile;
 
 function parseFiles(paths, cb) {
   // queue up a set number of files at a time
-  var q = async.queue(function(task, cb) {
+  var out = [];
+  var q = async.queue(function(task, callback) {
+    parseFile(task, function(err, data) {
+      console.log('file parsed');
+      console.log(data.parsed.length);
+      out.push(data);
+      console.log(out.length);
+      callback();
+    });
+  }, 10);
+  q.drain = function() {
+    console.log('every thing is done');
+    cb(null, out);
+  };
+  q.push(paths, function(err, data) {
 
-  }, 100);
-  async.map(paths, parseFile, function(err, data) {
-    console.log(data);
-    cb(err, data);
   });
+
 }
 module.exports.parseFiles = parseFiles;
