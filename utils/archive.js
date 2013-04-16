@@ -138,6 +138,10 @@ function saveFile(payload, path, cb) {
   console.log('writing: ' + path);
   zlib.gzip(new Buffer(JSON.stringify(payload)), function(err, data) {
     fs.writeFile(path, data, function(err, res) {
+      if (err) {
+        console.log('error saving file: ' + path);
+        console.log(err);
+      }
       cb(err, res);
     });
   });
@@ -156,6 +160,57 @@ function reformatFiles(dir, target, callback) {
     }, callback);
   });
 }
+
+function seperateFiles(dir, target, callback) {
+ fs.readdir(dir, function(err, files) {
+    async.eachSeries(files, function(f, cb) {
+      fs.readFile(path.join(dir, f), function(err, buffer) {
+        if (err) {
+          console.log(err);
+          cb(err, null);
+        } else {
+          zlib.gunzip(buffer, function(err, data) {
+            var obj = JSON.parse(data.toString());
+            // remove any events that do not deal with a repo
+            delete obj['undefined'];
+            var ids = Object.keys(obj);
+
+            async.eachSeries(ids, function(id, idCallback) {
+              // save the files, take that ssd!
+              var out = {};
+              out[id] = obj[id];
+              var fullTarget = path.join(target, id);
+
+              // create the write dir
+              fs.exists(fullTarget, function(status) {
+                if (!status) {
+                  fs.mkdir(fullTarget, function(err) {
+
+                    // save the files
+                    saveFile(out, path.join(fullTarget, f.replace('index-', '')), function(err, ack) {
+                      idCallback(err, ack);
+                    });
+                  });
+                } else {
+                  saveFile(out, path.join(fullTarget, f.replace('index-', '')), function(err, ack) {
+                    idCallback(err, ack);
+                  });
+                }
+              });
+            }, function() {
+              console.log('all files altered');
+              cb({err: 'forced error'});
+            });
+          });
+        }
+      });
+    }, callback);
+  });
+}
+
+seperateFiles('../reformat', '../seperate', function(err, res) {
+  console.log('done');
+});
 
 //reformatFiles('../raw/', '../reformat/index-', function() {
 //  console.log('done');
