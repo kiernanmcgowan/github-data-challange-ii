@@ -135,7 +135,6 @@ function reformatFile(fileName, target, cb) {
 }
 
 function saveFile(payload, path, cb) {
-  console.log('writing: ' + path);
   zlib.gzip(new Buffer(JSON.stringify(payload)), function(err, data) {
     fs.writeFile(path, data, function(err, res) {
       if (err) {
@@ -162,7 +161,7 @@ function reformatFiles(dir, target, callback) {
 }
 
 function seperateFiles(dir, target, callback) {
- fs.readdir(dir, function(err, files) {
+  fs.readdir(dir, function(err, files) {
     async.eachSeries(files, function(f, cb) {
       fs.readFile(path.join(dir, f), function(err, buffer) {
         if (err) {
@@ -199,7 +198,7 @@ function seperateFiles(dir, target, callback) {
               });
             }, function() {
               console.log('all files altered');
-              cb({err: 'forced error'});
+              cb(null, f);
             });
           });
         }
@@ -208,9 +207,96 @@ function seperateFiles(dir, target, callback) {
   });
 }
 
-seperateFiles('../reformat', '../seperate', function(err, res) {
+function compressByMonth(dir, target, callback) {
+  fs.readdir(dir, function(err, files) {
+    if (err) {
+      throw err;
+    }
+    // create the groups of files that we are going to run in sync
+    var groups = {};
+    for (var i = 0; i < files.length; i++) {
+      var arr = files[i].replace('index-', '').replace('.json.gz', '').split('-');
+      // do it on the month
+      var key = arr[0] + '-' + arr[1] + '-' + arr[2];
+      if (!groups[key]) {
+        groups[key] = [];
+      }
+      groups[key].push(files[i]);
+    }
+    var monthsToProcess = Object.keys(groups);
+    // for each month
+    async.eachSeries(monthsToProcess, function(month, monthCallback) {
+      console.log('on month: ' + month);
+      // have the repo keys
+      var monthSnapShot = {};
+      // and each file
+      async.eachSeries(groups[month], function(file, fileCallback) {
+        // get a timestamp for the stapshot
+        var hourTimestamp = file.replace('index-', '').replace('.json.gz', '');
+        fs.readFile(path.join(dir, file), function(err, buffer) {
+          zlib.gunzip(buffer, function(err, data) {
+            var obj = JSON.parse(data);
+            // delete bad parse
+            delete obj['undefined'];
+            _.each(obj, function(repo, repoId) {
+              if (!monthSnapShot[repoId]) {
+                monthSnapShot[repoId] = {};
+              }
+              monthSnapShot[repoId][hourTimestamp] = repo;
+            });
+            // done with the file
+            console.log('done with: ' + file);
+            fileCallback();
+          });
+        });
+      }, function() {
+        saveMonthIntoSeperateFiles(monthSnapShot, month, target);
+        // now save the snap shot
+        monthCallback();
+      });
+    }, callback);
+  });
+}
+
+function saveMonthIntoSeperateFiles(monthSnapShot, month, targetDir) {
+  var objIds = Object.keys(monthSnapShot);
+  var q = async.queue(function(id, cb) {
+    var fullTarget = path.join(targetDir, id);
+    var out = {};
+    out[id] = monthSnapShot[id];
+
+    fs.exists(fullTarget, function(status) {
+      if (!status) {
+        fs.mkdir(fullTarget, function(err) {
+          // save the files
+          saveFile(out, path.join(fullTarget, month + '.json.gz'), function(err, ack) {
+            cb();
+          });
+        });
+      } else {
+        saveFile(out, path.join(fullTarget, month + '.json.gz'), function(err, ack) {
+          cb();
+        });
+      }
+    });
+  }, 500);
+
+  q.drain = function() {
+    console.log('finished writing: ' + month);
+  };
+
+  q.push(objIds, function() {});
+}
+
+compressByMonth('../reformat', '../seperate', function(err, res) {
   console.log('done');
 });
+// NOOOPE
+/*seperateFiles('../reformat', '../seperate', function(err, res) {
+  console.log('done');
+  console.log(err);
+  console.log(res);
+});*/
 
 //reformatFiles('../raw/', '../reformat/index-', function() {
 //  console.log('done');
