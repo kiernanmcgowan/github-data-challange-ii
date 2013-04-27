@@ -7,6 +7,10 @@ var async = require('async');
 var _ = require('underscore');
 var path = require('path');
 var buffer = require('buffer');
+var pg = require('pg');
+var kue = require('kue');
+
+var jobQueue = kue.createQueue();
 
 // takes in a path and parses it
 function parseFile(path, cb) {
@@ -217,6 +221,7 @@ function compressByMonth(dir, target, callback) {
     for (var i = 0; i < files.length; i++) {
       var arr = files[i].replace('index-', '').replace('.json.gz', '').split('-');
       // do it on the month
+      // uncomment for daily processing
       var key = arr[0] + '-' + arr[1] + '-' + arr[2];
       if (!groups[key]) {
         groups[key] = [];
@@ -230,7 +235,7 @@ function compressByMonth(dir, target, callback) {
       // have the repo keys
       var monthSnapShot = {};
       // and each file
-      async.eachSeries(groups[month], function(file, fileCallback) {
+      async.each(groups[month], function(file, fileCallback) {
         // get a timestamp for the stapshot
         var hourTimestamp = file.replace('index-', '').replace('.json.gz', '');
         fs.readFile(path.join(dir, file), function(err, buffer) {
@@ -245,11 +250,11 @@ function compressByMonth(dir, target, callback) {
               monthSnapShot[repoId][hourTimestamp] = repo;
             });
             // done with the file
-            console.log('done with: ' + file);
             fileCallback();
           });
         });
       }, function() {
+        console.log('writing month: ' + month);
         saveMonthIntoSeperateFiles(monthSnapShot, month, target);
         // now save the snap shot
         monthCallback();
@@ -259,7 +264,10 @@ function compressByMonth(dir, target, callback) {
 }
 
 function saveMonthIntoSeperateFiles(monthSnapShot, month, targetDir) {
-  var objIds = Object.keys(monthSnapShot);
+  saveFile(monthSnapShot, path.join(targetDir, month + '.json.gz'), function(err, ack) {
+    console.log('finished writing: ' + month);
+  });
+  /*var objIds = Object.keys(monthSnapShot);
   var q = async.queue(function(id, cb) {
     var fullTarget = path.join(targetDir, id);
     var out = {};
@@ -285,12 +293,112 @@ function saveMonthIntoSeperateFiles(monthSnapShot, month, targetDir) {
     console.log('finished writing: ' + month);
   };
 
-  q.push(objIds, function() {});
+  q.push(objIds, function() {});*/
 }
 
-compressByMonth('../reformat', '../seperate', function(err, res) {
-  console.log('done');
+var conString = 'postgres://data:moardata@localhost:5432/postgres';
+var insertQueryString = 'INSERT INTO logdata(repo, hour, event, stars, payload) values($1, $2, $3, $4, $5)';
+var client = new pg.Client(conString);
+
+
+var sqlHeader = 'PREPARE manyInsert(bigint, timestamp, varchar(50), int, json) as INSERT INTO logdata(repo, hour, event, stars, payload) VALUES($1, $2, $3, $4, $5);';
+var perLine = 'EXCUTE manyInsert(';
+var sqlFooter = 'DEALLOCATE manyInsert';
+
+function moveFileToPostgres(dir, file, num, cb) {
+  fs.readFile(path.join(dir, file), function(err, buffer) {
+    if (err) {
+      cb(err);
+    } else {
+      zlib.gunzip(buffer, function(err, data) {
+        var reposToInsert = {};
+        var obj = JSON.parse(data);
+        delete obj['undefined'];
+
+        // clean out the ram
+        delete buffer;
+        delete data;
+
+        _.each(obj, function(repoObj, repoId) {
+          // just look at one event for an idea of the star
+          var types = Object.keys(repoObj);
+          for (var i = 0; i < types.length; i++) {
+            if (typeof repoObj[types[i]][0].repo.watchers === 'number' && repoObj[types[i]][0].repo.watchers >= num) {
+              reposToInsert[repoId] = true;
+              break;
+            }
+          }
+        });
+
+        // create the timestamp for the data
+        var base = path.basename(file).replace('index-', '').replace('.json.gz', '');
+        var arr = base.split('-');
+        var timeStamp = arr[0] + '-' + arr[1] + '-' + arr[2] + ' ' + arr[3] + ':00';
+
+        console.log(sqlHeader);
+        // now iterate over the repos to insert and insert them
+        var repos = Object.keys(reposToInsert);
+        _.each(repos, function(repoId) {
+          // get the events
+          var types = Object.keys(obj[repoId]);
+          // iterate over event types
+          _.each(types, function(eventType) {
+            var typeArray = obj[repoId][eventType];
+            // finally insert that data
+            _.each(typeArray, function(objToInsert) {
+              perLine += repoId + ', ' + timeStamp + ', ' + eventType + ', ' +
+                                objToInsert.repo.watchers + ', ' + JSON.stringify(objToInsert) + ');';
+              console.log(perLine);
+            });
+          });
+        });
+
+        // clean out the ram
+        delete obj;
+        delete repos;
+        delete reposToInsert;
+
+        cb(null);
+      });
+    }
+  });
+}
+
+jobQueue.process('store', function(job, done) {
+  var jobData = job.data;
+  moveFileToPostgres(jobData.dir, jobData.file, jobData.num, done);
 });
+
+function moveToPostgres(dir, num, callback) {
+  fs.readdir(dir, function(err, files) {
+    if (err) {
+      console.log(err);
+      cb(err);
+    } else {
+      // create the job batch
+      async.eachSeries(files, function(f, cb) {
+        moveFileToPostgres(dir, f, num, cb);
+      }, function() {
+        console.log(done);
+        callback();
+      });
+    }
+  });
+}
+
+client.connect(function(err) {
+  moveToPostgres('../reformat', 5, function() {
+      console.log('done');
+      process.exit();
+  });
+});
+
+kue.app.listen(3000);
+
+
+/*compressByMonth('../reformat', '../seperate', function(err, res) {
+  console.log('done');
+})*/
 // NOOOPE
 /*seperateFiles('../reformat', '../seperate', function(err, res) {
   console.log('done');
