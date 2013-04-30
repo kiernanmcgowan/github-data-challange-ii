@@ -3,9 +3,15 @@ import gzip
 import json
 import os
 import psycopg2 as db
+import re
+# nlp fun!
+from nltk.corpus import stopwords
 
 conn = db.connect("dbname='postgres' user='data' host='localhost' password='moardata'")
-insertQuery ='INSERT INTO logdata(repo, hour, event, stars, payload) VALUES(%s, %s, %s, %s, %s)'
+insertQuery = 'INSERT INTO logdata(repo, hour, event, stars, payload) VALUES(%s, %s, %s, %s, %s)'
+
+dataQuery = 'select distinct on (repo) repo, stars, payload from logdata order by repo'
+transferQuery = 'insert into repo_desc(repo, "desc", short_desc, stars, issues, forks, lang) VALUES(%s, %s, %s, %s, %s, %s, %s)'
 
 cur = conn.cursor()
 
@@ -42,8 +48,8 @@ def storeInPostgres(file, fName, num):
         for eventType, eventArr in repo.iteritems():
             for event in eventArr:
                 cur.execute(insertQuery, (repoId, timeStamp, eventType, event['repo']['watchers'], json.dumps(event)))
-                conn.commit()
-
+    # commit the bitch
+    conn.commit()
 
 
 def getFiles(dir, num):
@@ -52,4 +58,32 @@ def getFiles(dir, num):
         print files
         storeInPostgres(os.path.join(dir, files), files, num)
 
-getFiles('../reformat', 5)
+
+def transferFromLog():
+    print 'query data'
+    cur.execute(dataQuery)
+    print 'fetch data'
+    rows = cur.fetchall()
+    print 'process data'
+    for row in rows:
+        print row[0]
+        word_list = row[2]['repo']['description'].lower().split(' ')
+        # regex out punctuation and numbers
+        punctuation = re.compile(r'[-.?!,":;()|0-9]')
+        word_list = [punctuation.sub("", word) for word in word_list]
+        # thanks to Daren Thomas
+        # http://stackoverflow.com/questions/5486337/how-to-remove-stop-words-using-nltk-or-python
+        filtered_words = [w for w in word_list if not w in stopwords.words('english')]
+        desc = row[2]['repo']['description']
+        short_desc = ' '.join(filtered_words)
+        stars = row[1]
+        issues = row[2]['repo']['open_issues']
+        forks = row[2]['repo']['forks']
+        lang = row[2]['repo']['language']
+        cur.execute(transferQuery, (row[0], desc, short_desc, stars, issues, forks, lang))
+        # commit the bitch
+        conn.commit()
+
+
+#getFiles('../reformat', 0)
+transferFromLog()
