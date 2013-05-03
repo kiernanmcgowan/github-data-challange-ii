@@ -3,15 +3,21 @@ import gzip
 import json
 import os
 import psycopg2 as db
+import redis
 import re
 # nlp fun!
 from nltk.corpus import stopwords
+
+# connect to redis
+red = redis.StrictRedis(host='localhost', port=6379, db=0)
 
 conn = db.connect("dbname='postgres' user='data' host='localhost' password='moardata'")
 insertQuery = 'INSERT INTO logdata(repo, hour, event, stars, payload) VALUES(%s, %s, %s, %s, %s)'
 
 dataQuery = 'select distinct on (repo) repo, stars, payload from logdata order by repo'
 transferQuery = 'insert into repo_desc(repo, "desc", short_desc, stars, issues, forks, lang) VALUES(%s, %s, %s, %s, %s, %s, %s)'
+
+nlpQuery = 'select repo, short_desc, stars, lang from repo_desc'
 
 cur = conn.cursor()
 
@@ -67,23 +73,46 @@ def transferFromLog():
     print 'process data'
     for row in rows:
         print row[0]
-        word_list = row[2]['repo']['description'].lower().split(' ')
+
+        repoObj = row[2]['repo']
+        desc = repoObj.get('description', '')
+
+        word_list = desc.lower().split(' ')
         # regex out punctuation and numbers
         punctuation = re.compile(r'[-.?!,":;()|0-9]')
         word_list = [punctuation.sub("", word) for word in word_list]
         # thanks to Daren Thomas
         # http://stackoverflow.com/questions/5486337/how-to-remove-stop-words-using-nltk-or-python
         filtered_words = [w for w in word_list if not w in stopwords.words('english')]
-        desc = row[2]['repo']['description']
+
         short_desc = ' '.join(filtered_words)
         stars = row[1]
-        issues = row[2]['repo']['open_issues']
-        forks = row[2]['repo']['forks']
-        lang = row[2]['repo']['language']
+        issues = repoObj.get('open_issues', 0)
+        forks = repoObj.get('forks', 0)
+        lang = repoObj.get('language', '')
         cur.execute(transferQuery, (row[0], desc, short_desc, stars, issues, forks, lang))
         # commit the bitch
         conn.commit()
 
 
+def redisPunishment():
+    print 'time to punish redis'
+    cur.execute(nlpQuery)
+    rows = cur.fetchall()
+    for row in rows:
+        print row[3]
+        desc = row[1]
+        # inc by one, avoid multiply by zero errors
+        incVal = row[2] + 1
+        words = desc.split(' ')
+        for w in words:
+            # under score the work by the lang for seperation
+            red.hincrby('weight', w, incVal)
+            red.hincrby('count', w, 1)
+            if True != (not row[3]):
+                red.hincrby(row[3], w, incVal)
+                red.hincrby(row[3] + '_count', w, 1)
+
 #getFiles('../reformat', 0)
-transferFromLog()
+#transferFromLog()
+redisPunishment()
