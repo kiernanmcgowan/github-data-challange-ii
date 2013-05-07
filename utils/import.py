@@ -113,6 +113,35 @@ def redisPunishment():
                 red.hincrby(row[3], w, incVal)
                 red.hincrby(row[3] + '_count', w, 1)
 
+
+def createWordDist():
+    print 'creating word dist'
+    # get all the different keys
+    keys = red.keys('*')
+    for k in keys:
+        print k
+        postfix = ''
+        # per lang count
+        if ('_count' in k):
+            postfix = k
+        # per lang weight
+        else:
+            postfix = k
+
+        # total weight
+        if ('weight' == k):
+            postfix = 'all'
+        # total count
+        if ('count' == k):
+            postfix = 'count'
+
+        obj = red.hgetall(k)
+        key = 'words_' + postfix
+        for word, weight in obj.iteritems():
+            if (word != ''):
+                red.hincrby(key, word, weight)
+
 #getFiles('../reformat', 0)
 #transferFromLog()
-redisPunishment()
+#redisPunishment()
+createWordDist()
