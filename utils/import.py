@@ -5,6 +5,7 @@ import os
 import psycopg2 as db
 import redis
 import re
+import numpy
 # nlp fun!
 from nltk.corpus import stopwords
 
@@ -114,34 +115,51 @@ def redisPunishment():
                 red.hincrby(row[3] + '_count', w, 1)
 
 
-def createWordDist():
-    print 'creating word dist'
+def calcMeanMeadian():
+    print 'calc mean and median'
     # get all the different keys
     keys = red.keys('*')
     for k in keys:
         print k
-        postfix = ''
-        # per lang count
-        if ('_count' in k):
-            postfix = k
-        # per lang weight
-        else:
-            postfix = k
-
-        # total weight
-        if ('weight' == k):
-            postfix = 'all'
-        # total count
-        if ('count' == k):
-            postfix = 'count'
 
         obj = red.hgetall(k)
-        key = 'words_' + postfix
+        vals = []
         for word, weight in obj.iteritems():
-            if (word != ''):
-                red.hincrby(key, word, weight)
+            vals.append(int(weight))
+        # mean, median, mode
+        red.hset('mean_median', k + '_mean', numpy.mean(vals))
+        red.hset('mean_median', k + '_median', numpy.median(vals))
+
+# ignore this for now, come back later..
+#def createWordDist():
+#    print 'creating word dist'
+#    # get all the different keys
+#    keys = red.keys('*')
+#    for k in keys:
+#        print k
+#        postfix = ''
+#        # per lang count
+#        if ('_count' in k):
+#            postfix = k
+#        # per lang weight
+#        else:
+#            postfix = k
+#
+#        # total weight
+#        if ('weight' == k):
+#            postfix = 'all'
+#        # total count
+#        if ('count' == k):
+#            postfix = 'count'
+#
+#        obj = red.hgetall(k)
+#        key = 'words_' + postfix
+#        for word, weight in obj.iteritems():
+#            if (word != ''):
+#                red.hincrby(key, word, weight)
 
 #getFiles('../reformat', 0)
 #transferFromLog()
 #redisPunishment()
-createWordDist()
+
+calcMeanMeadian()
